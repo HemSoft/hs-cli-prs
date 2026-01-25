@@ -1,18 +1,10 @@
 import chalk from 'chalk';
 import gradient from 'gradient-string';
 
-// Customize this logo for your CLI tool
-// Generate ASCII art at: https://patorjk.com/software/taag/
-const LOGO_LINES = [
-  '  ██╗  ██╗███████╗   ██████╗██╗     ██╗',
-  '  ██║  ██║██╔════╝  ██╔════╝██║     ██║',
-  '  ███████║███████╗  ██║     ██║     ██║',
-  '  ██╔══██║╚════██║  ██║     ██║     ██║',
-  '  ██║  ██║███████║  ╚██████╗███████╗██║',
-  '  ╚═╝  ╚═╝╚══════╝   ╚═════╝╚══════╝╚═╝',
-];
+// Clean ANSI shadow style logo (thin box-drawing characters)
+const LOGO_LINES = ['  ┌─┐┬─┐┌─┐', '  ├─┘├┬┘└─┐', '  ┴  ┴└─└─┘'];
 
-// Gradient definitions (customize these!)
+// Gradient definitions
 const vice = gradient(['#ff2e97', '#00f0ff']);
 const gold = gradient(['#bf953f', '#fcf6ba', '#b38728', '#fbf5b7', '#aa771c']);
 const greenGlow = gradient(['#00ff87', '#60efff']);
@@ -23,28 +15,20 @@ export interface BannerOptions {
 }
 
 /**
- * Display the CLI banner
- * Customize this for your tool!
+ * Display the PRS CLI banner
  */
 export function showBanner(options: BannerOptions = {}) {
-  const { version = 'v1.0.0', showTaglines = true } = options;
+  const { version = 'v0.1.0', showTaglines = true } = options;
 
-  // Display logo with gradient
-  for (const line of LOGO_LINES) {
-    console.log(vice(line));
-  }
-
-  // Version
-  console.log('  ' + greenGlow(`version ${version}`));
-
-  // Branding
+  console.log(vice(LOGO_LINES[0]!));
+  console.log(vice(LOGO_LINES[1]!) + '  ' + greenGlow(version));
+  console.log(vice(LOGO_LINES[2]!));
   console.log('  ' + gold('✦ by HemSoft Developments ✦'));
 
-  // Optional taglines
   if (showTaglines) {
-    console.log(chalk.dim('  ══════════════════════════════════════════════'));
-    console.log(chalk.hex('#ff2e97')('  ⚡ ') + chalk.bold('Production-Ready CLI Template'));
-    console.log(chalk.hex('#00f0ff')('  🤖 ') + chalk.dim('Powered by GitHub Copilot'));
+    console.log(chalk.dim('  ══════════════════════════════════'));
+    console.log(chalk.hex('#ff2e97')('  ⚡ ') + chalk.bold('AI-Powered Pull Request Monitoring'));
+    console.log(chalk.hex('#00f0ff')('  🤖 ') + chalk.dim('GitHub Copilot SDK'));
   }
 
   console.log();
