@@ -1,0 +1,59 @@
+{
+  "name": "HemSoft CLI Template",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "installDirectlyFromGitHubRelease": true,
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "installOhMyZsh": true,
+      "upgradePackages": true,
+      "username": "node",
+      "userUid": "automatic",
+      "userGid": "automatic"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "streetsidesoftware.code-spell-checker",
+        "ms-vscode.vscode-typescript-next"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "eslint.validate": ["typescript"],
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "typescript.enablePromptUseWorkspaceTsdk": true
+      }
+    }
+  },
+
+  "mounts": [
+    "source=devcontainer-zsh-history,target=/home/node/.zsh_history,type=volume",
+    "source=devcontainer-bash-history,target=/home/node/.bash_history,type=volume"
+  ],
+
+  "postCreateCommand": "npm install && npm run prepare",
+
+  "remoteUser": "node",
+
+  "forwardPorts": [],
+
+  "portsAttributes": {},
+
+  "containerEnv": {
+    "TERM": "xterm-256color"
+  }
+}

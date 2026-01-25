@@ -1,0 +1,18 @@
+# Ensure consistent line endings across platforms
+* text=auto eol=lf
+
+# Explicitly mark specific file types as text
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Mark specific files as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
