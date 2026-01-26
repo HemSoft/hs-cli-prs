@@ -39,9 +39,7 @@ Include a relevant emoji.`;
     );
 
     console.log(chalk.gray(`\nModel used: ${chalk.yellow(options.model || 'default')}`));
-    console.log(
-      chalk.dim("\nTip: Try different models with --model claude, --model gpt5, etc.\n")
-    );
+    console.log(chalk.dim('\nTip: Try different models with --model claude, --model gpt5, etc.\n'));
   } catch (error) {
     spinner.fail('Failed to generate greeting');
     console.error(

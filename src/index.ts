@@ -7,17 +7,23 @@ import Table from 'cli-table3';
 import { Command } from 'commander';
 import { consola } from 'consola';
 import terminalLink from 'terminal-link';
+import inquirer from 'inquirer';
 import { BitbucketClient } from './api/bitbucket.js';
 import { GitHubClient, type PullRequest } from './api/github.js';
-import { getConfigPath, loadConfig } from './lib/config-loader.js';
+import { getConfigPath, loadConfig, saveConfig } from './lib/config-loader.js';
 import { showBanner } from './lib/banner.js';
-import { checkGitHubAuth } from './utils/auth-check.js';
-import {
-  checkGitHubCLI,
-  getGitHubAccounts,
-  runInteractiveSetup,
-} from './utils/interactive-setup.js';
+import { runInteractiveSetup } from './utils/interactive-setup.js';
 import { getRandomSplashText } from './utils/splash-texts.js';
+import type { Config } from './types/config.js';
+import {
+  configShow,
+  configPath,
+  configGet,
+  configSet,
+  configEdit,
+  configReset,
+  configHelp,
+} from './commands/config.js';
 
 // Get version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -46,19 +52,62 @@ program
     }
   });
 
-// Add auth-check command
-program
-  .command('auth-check')
-  .description('Check GitHub authentication status and organization access')
-  .option('--org <organization>', 'Organization to check access for')
-  .action(async (options: { org?: string }) => {
-    const config = loadConfig();
-    const org = options.org || config.github.org;
+// Add config command with subcommands
+const configCommand = program
+  .command('config')
+  .description('View and manage configuration')
+  .action(() => {
+    // Default action: show config
+    configShow();
+  });
 
-    consola.info(`Checking GitHub authentication for organization: ${org}\n`);
-    const isValid = await checkGitHubAuth(org);
+configCommand
+  .command('show')
+  .description('Show current configuration')
+  .action(() => {
+    configShow();
+  });
 
-    process.exit(isValid ? 0 : 1);
+configCommand
+  .command('path')
+  .description('Print config file path')
+  .action(() => {
+    configPath();
+  });
+
+configCommand
+  .command('edit')
+  .description('Interactive config editing')
+  .action(async () => {
+    await configEdit();
+  });
+
+configCommand
+  .command('get <key>')
+  .description('Get a specific config value')
+  .action((key: string) => {
+    configGet(key);
+  });
+
+configCommand
+  .command('set <key> <value>')
+  .description('Set a specific config value')
+  .action((key: string, value: string) => {
+    configSet(key, value);
+  });
+
+configCommand
+  .command('reset')
+  .description('Reset configuration to defaults')
+  .action(async () => {
+    await configReset();
+  });
+
+configCommand
+  .command('help')
+  .description('Show config help')
+  .action(() => {
+    configHelp();
   });
 
 // Main command
@@ -91,6 +140,51 @@ program
       }
 
       try {
+        // Check if config exists first
+        const configPath = getConfigPath();
+        const hasConfig = existsSync(configPath);
+
+        if (!hasConfig) {
+          console.log('');
+          consola.info(chalk.cyan('👋 Welcome to prs!'));
+          console.log('');
+          consola.info('It looks like this is your first time running prs.');
+          consola.info("Let's get you set up with GitHub and/or Bitbucket accounts.");
+          console.log('');
+
+          const { shouldSetup } = await inquirer.prompt<{ shouldSetup: boolean }>([
+            {
+              type: 'confirm',
+              name: 'shouldSetup',
+              message: 'Would you like to configure prs now?',
+              default: true,
+            },
+          ]);
+
+          if (shouldSetup) {
+            await runInteractiveSetup();
+            consola.success('✅ Setup complete! Starting prs...');
+            console.log('');
+          } else {
+            // Create a minimal starter config with empty arrays
+            const starterConfig: Config = {
+              github: {
+                accounts: [],
+              },
+              bitbucket: {
+                workspaces: [],
+              },
+              skipBitbucket: false,
+              watchInterval: 15,
+            };
+            saveConfig(starterConfig, configPath);
+            consola.info('Created starter configuration with no accounts.');
+            consola.info('You can add accounts later by running: prs init');
+            console.log('');
+          }
+        }
+
+        // Load config (now guaranteed to exist)
         const config = loadConfig();
 
         if (options.skipBitbucket) {
@@ -118,50 +212,7 @@ program
           dateStr = options.approvedMergedSince;
         }
 
-        const configPath = getConfigPath();
-        const hasConfig = existsSync(configPath);
-
-        if (!hasConfig) {
-          const hasGH = await checkGitHubCLI();
-          if (!hasGH) {
-            consola.error('❌ GitHub CLI not found!');
-            console.log('');
-            consola.info('Please install GitHub CLI:');
-            consola.info('  Windows:  winget install --id GitHub.cli');
-            consola.info('  macOS:    brew install gh');
-            consola.info('  Linux:    https://github.com/cli/cli#installation');
-            console.log('');
-            consola.info('After installing, run: prs init');
-            process.exit(1);
-          }
-
-          const accounts = await getGitHubAccounts();
-          if (accounts.length === 0) {
-            consola.error('❌ No authenticated GitHub accounts found!');
-            console.log('');
-            consola.info('Please authenticate with GitHub first:');
-            consola.info('  gh auth login');
-            console.log('');
-            consola.info('Then run: prs init');
-            process.exit(1);
-          }
-
-          if (accounts.length > 1) {
-            consola.warn(`Found ${accounts.length} GitHub accounts: ${accounts.join(', ')}`);
-            console.log('');
-            consola.info('Please run setup to configure which accounts to use:');
-            consola.info('  prs init');
-            process.exit(1);
-          }
-
-          consola.info(
-            `✨ Auto-configuring for GitHub account: ${accounts[0]} (org: ${accounts[0]})`
-          );
-          consola.info("💡 Run 'prs init' to customize configuration or add more accounts.");
-          console.log('');
-        }
-
-        const fetchAndDisplay = async (clearScreen = true) => {
+        const fetchAndDisplay = async (clearScreen = true, nextRefreshTime?: Date) => {
           let splashInterval: ReturnType<typeof setInterval> | undefined;
           const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
           let frameIndex = 0;
@@ -211,6 +262,8 @@ program
 
           if (clearScreen) {
             console.clear();
+            // Re-show banner after clear
+            showBanner({ version: `v${version}`, showTaglines: true });
           }
 
           const terminalWidth = process.stdout.columns || 120;
@@ -219,7 +272,7 @@ program
             approved: 11,
             src: 5,
             number: 6,
-            author: 16,
+            author: 20,
             date: 13,
           };
           const totalFixed = Object.values(fixedWidths).reduce((a, b) => a + b, 0);
@@ -234,14 +287,41 @@ program
 
           const bannerWidth = actualTableWidth - 2;
           const titleText = `Pull Requests (${allPRs.length} total)`;
-          const padding = Math.max(0, Math.floor((bannerWidth - titleText.length) / 2));
+          const currentTime = new Date().toLocaleTimeString();
+          const nextRefreshText = nextRefreshTime
+            ? `Next refresh at ${nextRefreshTime.toLocaleTimeString()}`
+            : '';
+
+          // Build header with left/center/right alignment
+          // Calculate visible character positions (excluding ANSI codes)
+          const leftText = nextRefreshText;
+          const rightText = currentTime;
+          const centerText = titleText;
+
+          // Total visible content: 1 space + leftText + spaces + centerText + spaces + rightText + 1 space
+          const availableWidth = bannerWidth;
+          const centerPos = Math.floor(availableWidth / 2);
+          const centerStart = centerPos - Math.floor(centerText.length / 2);
+
+          // Build the line character by character for precise alignment
+          let line = ' ' + leftText;
+          const spacesToCenter = Math.max(1, centerStart - line.length);
+          line += ' '.repeat(spacesToCenter) + centerText;
+          const spacesToRight = Math.max(1, availableWidth - line.length - rightText.length - 1);
+          line += ' '.repeat(spacesToRight) + rightText + ' ';
+
+          // Apply styling after calculating positions
+          const styledLine =
+            ' ' +
+            chalk.dim(leftText) +
+            ' '.repeat(spacesToCenter) +
+            centerText +
+            ' '.repeat(spacesToRight) +
+            chalk.dim(rightText) +
+            ' ';
 
           console.log(chalk.cyan.bold(`╔${'═'.repeat(bannerWidth)}╗`));
-          console.log(
-            chalk.cyan.bold(
-              `║${' '.repeat(padding)}${titleText}${' '.repeat(bannerWidth - padding - titleText.length)}║`
-            )
-          );
+          console.log(chalk.cyan.bold('║') + styledLine + chalk.cyan.bold('║'));
           console.log(chalk.cyan.bold(`╚${'═'.repeat(bannerWidth)}╝`));
 
           const table = new Table({
@@ -303,7 +383,7 @@ program
 
             // Create clickable link - force hyperlink mode since VS Code terminal
             // supports OSC 8 but isn't detected by supports-hyperlinks
-            const titleLink = terminalLink(title, pr.url, { fallback: false });
+            const titleLink = chalk.cyan(terminalLink(title, pr.url, { fallback: false }));
 
             let repoName = pr.repository;
             const maxRepoLen = repositoryWidth - 3;
@@ -336,16 +416,12 @@ program
         if (options.once) {
           await fetchAndDisplay(false);
         } else {
-          consola.info(`Running in watch mode (refresh every ${config.watchInterval} minutes)`);
-          consola.info('Press Ctrl+C to exit\n');
-
+          let firstRun = true;
           while (true) {
-            await fetchAndDisplay(true);
             const nextRun = new Date();
             nextRun.setMinutes(nextRun.getMinutes() + config.watchInterval);
-            consola.info(
-              `\nNext refresh at ${nextRun.toLocaleTimeString()}. Waiting ${config.watchInterval} minutes...`
-            );
+            await fetchAndDisplay(!firstRun, nextRun);
+            firstRun = false;
             await new Promise((resolve) => setTimeout(resolve, config.watchInterval * 60 * 1000));
           }
         }
@@ -402,6 +478,14 @@ program.addHelpText('after', () => {
   lines.push(
     chalk.cyan('    $ prs init') +
       chalk.dim('                         # Run interactive setup wizard')
+  );
+  lines.push(
+    chalk.cyan('    $ prs config') +
+      chalk.dim('                       # Show current configuration')
+  );
+  lines.push(
+    chalk.cyan('    $ prs config set watchInterval 5') +
+      chalk.dim('  # Set watch interval to 5 minutes')
   );
   lines.push('');
   return lines.join('\n');

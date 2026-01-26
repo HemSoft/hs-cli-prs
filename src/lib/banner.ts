@@ -30,8 +30,6 @@ export function showBanner(options: BannerOptions = {}) {
     console.log(chalk.hex('#ff2e97')('  ⚡ ') + chalk.bold('AI-Powered Pull Request Monitoring'));
     console.log(chalk.hex('#00f0ff')('  🤖 ') + chalk.dim('GitHub Copilot SDK'));
   }
-
-  console.log();
 }
 
 /**

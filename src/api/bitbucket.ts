@@ -15,29 +15,15 @@ import type { PullRequest } from './github.js';
  */
 export class BitbucketClient {
   private baseUrl = 'https://api.bitbucket.org/2.0';
-  private currentUser: { uuid: string } | null = null;
+  private userCache = new Map<string, { uuid: string }>();
 
   constructor(private config: BitbucketConfig) {}
 
   /**
-   * Check if credentials are available
+   * Get authorization header for a specific workspace
    */
-  isAvailable(): boolean {
-    return !!this.config.apiKey;
-  }
-
-  /**
-   * Get authorization header
-   */
-  private getAuthHeader(): Record<string, string> {
-    if (!this.config.apiKey) {
-      return {};
-    }
-
-    const credentials = this.config.username
-      ? `${this.config.username}:${this.config.apiKey}`
-      : `x-token-auth:${this.config.apiKey}`;
-
+  private getAuthHeader(username: string, token: string): Record<string, string> {
+    const credentials = `${username}:${token}`;
     const base64 = Buffer.from(credentials).toString('base64');
 
     return {
@@ -48,7 +34,11 @@ export class BitbucketClient {
   /**
    * Make an API request with retry logic for rate limits
    */
-  private async apiRequest<T>(url: string, maxAttempts = 5): Promise<T> {
+  private async apiRequest<T>(
+    url: string,
+    authHeaders: Record<string, string>,
+    maxAttempts = 5
+  ): Promise<T> {
     let attempt = 0;
 
     while (attempt < maxAttempts) {
@@ -56,7 +46,7 @@ export class BitbucketClient {
 
       try {
         const response = await fetch(url, {
-          headers: this.getAuthHeader(),
+          headers: authHeaders,
         });
 
         if (response.status === 429) {
@@ -91,12 +81,12 @@ export class BitbucketClient {
   /**
    * Get paged results from Bitbucket API
    */
-  private async getPagedResults<T>(url: string): Promise<T[]> {
+  private async getPagedResults<T>(url: string, authHeaders: Record<string, string>): Promise<T[]> {
     const results: T[] = [];
     let nextUrl: string | undefined = url;
 
     while (nextUrl) {
-      const response = await this.apiRequest<BitbucketPagedResponse>(nextUrl);
+      const response = await this.apiRequest<BitbucketPagedResponse>(nextUrl, authHeaders);
       const parsed = BitbucketPagedResponseSchema.parse(response);
 
       if (parsed.values) {
@@ -110,38 +100,45 @@ export class BitbucketClient {
   }
 
   /**
-   * Get current Bitbucket user
+   * Get current Bitbucket user for a specific workspace
    */
-  async getCurrentUser(): Promise<{ uuid: string } | null> {
-    if (this.currentUser) {
-      return this.currentUser;
+  private async getCurrentUser(username: string, token: string): Promise<{ uuid: string } | null> {
+    // Check cache first
+    if (this.userCache.has(username)) {
+      return this.userCache.get(username)!;
     }
 
     try {
-      const user = await this.apiRequest<{ uuid: string }>(`${this.baseUrl}/user`);
-      this.currentUser = user;
+      const authHeaders = this.getAuthHeader(username, token);
+      const user = await this.apiRequest<{ uuid: string }>(`${this.baseUrl}/user`, authHeaders);
+
+      // Cache the user
+      this.userCache.set(username, user);
       return user;
     } catch (error) {
-      consola.debug('Failed to get current Bitbucket user:', error);
+      consola.debug(`Failed to get current Bitbucket user for ${username}:`, error);
       return null;
     }
   }
 
   /**
-   * Fetch repositories updated in the last 90 days
+   * Fetch repositories updated in the last 90 days for a workspace
    */
-  async getRecentRepositories(): Promise<BitbucketRepository[]> {
+  private async getRecentRepositories(
+    workspace: string,
+    authHeaders: Record<string, string>
+  ): Promise<BitbucketRepository[]> {
     const minDate = new Date();
     minDate.setDate(minDate.getDate() - 90);
     const minDateStr = minDate.toISOString().split('T')[0];
 
-    const url = `${this.baseUrl}/repositories/${this.config.workspace}?pagelen=100&sort=-updated_on&q=updated_on>=${minDateStr}`;
+    const url = `${this.baseUrl}/repositories/${workspace}?pagelen=100&sort=-updated_on&q=updated_on>=${minDateStr}`;
 
     try {
-      const repos = await this.getPagedResults<BitbucketRepository>(url);
+      const repos = await this.getPagedResults<BitbucketRepository>(url, authHeaders);
       return repos.map((repo) => BitbucketRepositorySchema.parse(repo));
     } catch (error) {
-      consola.error('Failed to fetch Bitbucket repositories:', error);
+      consola.error(`Failed to fetch Bitbucket repositories for ${workspace}:`, error);
       return [];
     }
   }
@@ -149,9 +146,10 @@ export class BitbucketClient {
   /**
    * Fetch PRs for a specific repository
    */
-  async getRepositoryPRs(
+  private async getRepositoryPRs(
     repoFullName: string,
     state: 'OPEN' | 'MERGED',
+    authHeaders: Record<string, string>,
     dateStr?: string
   ): Promise<BitbucketPullRequest[]> {
     let query = `state="${state}"`;
@@ -165,7 +163,7 @@ export class BitbucketClient {
     const url = `${this.baseUrl}/repositories/${repoFullName}/pullrequests?q=${encodeURIComponent(query)}&sort=-updated_on&pagelen=50&fields=${fields}`;
 
     try {
-      const prs = await this.getPagedResults<BitbucketPullRequest>(url);
+      const prs = await this.getPagedResults<BitbucketPullRequest>(url, authHeaders);
       return prs.map((pr) => BitbucketPullRequestSchema.parse(pr));
     } catch (error) {
       consola.debug(`Failed to fetch PRs for ${repoFullName}:`, error);
@@ -174,23 +172,63 @@ export class BitbucketClient {
   }
 
   /**
-   * Fetch all PRs based on mode
+   * Fetch all PRs based on mode for all configured workspaces
    */
   async fetchPRs(
     mode: 'default' | 'approved-open' | 'approved-merged-since',
     dateStr?: string
   ): Promise<PullRequest[]> {
-    if (!this.isAvailable()) {
-      consola.warn('Bitbucket API key not configured. Skipping Bitbucket checks.');
-      return [];
+    const allPrs: PullRequest[] = [];
+
+    // Process each configured Bitbucket workspace
+    for (const workspace of this.config.workspaces) {
+      const { workspace: workspaceName, username, tokenEnvVar } = workspace;
+      const token = process.env[tokenEnvVar];
+
+      if (!token) {
+        consola.warn(
+          `⚠️  Skipping workspace '${workspaceName}' - token not available in ${tokenEnvVar}`
+        );
+        continue;
+      }
+
+      consola.debug(`Checking Bitbucket workspace '${workspaceName}'...`);
+
+      try {
+        const prs = await this.fetchPRsForWorkspace(workspaceName, username, token, mode, dateStr);
+        allPrs.push(...prs);
+
+        consola.debug(`✓ Found ${prs.length} PRs in workspace ${workspaceName}`);
+      } catch (error) {
+        consola.warn(
+          `⚠️  Error fetching PRs for workspace ${workspaceName}:`,
+          error instanceof Error ? error.message : error
+        );
+        continue;
+      }
     }
 
-    const currentUser = await this.getCurrentUser();
+    return allPrs;
+  }
+
+  /**
+   * Fetch PRs for a specific workspace
+   */
+  private async fetchPRsForWorkspace(
+    workspaceName: string,
+    username: string,
+    token: string,
+    mode: 'default' | 'approved-open' | 'approved-merged-since',
+    dateStr?: string
+  ): Promise<PullRequest[]> {
+    const authHeaders = this.getAuthHeader(username, token);
+
+    const currentUser = await this.getCurrentUser(username, token);
     if (!currentUser) {
       return [];
     }
 
-    const repos = await this.getRecentRepositories();
+    const repos = await this.getRecentRepositories(workspaceName, authHeaders);
     if (repos.length === 0) {
       return [];
     }
@@ -199,7 +237,7 @@ export class BitbucketClient {
     const results: PullRequest[] = [];
 
     for (const repo of repos) {
-      const prs = await this.getRepositoryPRs(repo.full_name, apiState, dateStr);
+      const prs = await this.getRepositoryPRs(repo.full_name, apiState, authHeaders, dateStr);
 
       for (const pr of prs) {
         let include = false;

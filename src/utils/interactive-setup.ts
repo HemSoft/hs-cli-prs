@@ -1,165 +1,116 @@
-import { exec } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { consola } from 'consola';
 import inquirer from 'inquirer';
+import chalk from 'chalk';
 import type { Config } from '../types/config.js';
-
-const execAsync = promisify(exec);
-
-/**
- * Check if GitHub CLI is installed
- */
-export async function checkGitHubCLI(): Promise<boolean> {
-  try {
-    await execAsync('gh --version');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Get authenticated GitHub accounts from gh CLI
- */
-export async function getGitHubAccounts(): Promise<string[]> {
-  try {
-    const { stdout, stderr } = await execAsync('gh auth status');
-    // gh auth status outputs to stdout on success, stderr on failure
-    // Check both to handle different versions/platforms
-    const output = stdout || stderr;
-
-    const accounts: string[] = [];
-    // Match "Logged in to github.com account USERNAME" - the checkmark may vary by platform
-    const regex = /Logged in to github\.com account (\S+)/gi;
-    let match: RegExpExecArray | null = null;
-
-    match = regex.exec(output);
-    while (match !== null) {
-      if (match[1]) {
-        // Strip trailing (keyring) or similar parenthetical info
-        const account = match[1].replace(/\([^)]*\)$/, '');
-        accounts.push(account);
-      }
-      match = regex.exec(output);
-    }
-
-    return accounts;
-  } catch {
-    return [];
-  }
-}
+import { validateGitHubToken, validateBitbucketToken } from './token-validator.js';
+import { saveConfig, getConfigPath } from '../lib/config-loader.js';
 
 /**
  * Interactive setup wizard
  */
 export async function runInteractiveSetup(): Promise<Config> {
-  console.log('');
   consola.box('🚀 Welcome to PRS Setup!');
-  console.log('');
 
-  // Step 1: Check GitHub CLI
-  consola.start('Checking for GitHub CLI...');
-  const hasGH = await checkGitHubCLI();
+  consola.info('This wizard will help you configure GitHub and Bitbucket access.');
+  consola.info("You'll need to create Personal Access Tokens (PATs) for authentication.");
 
-  if (!hasGH) {
-    consola.error('❌ GitHub CLI not found!');
-    console.log('');
-    consola.info('Please install GitHub CLI first:');
-    consola.info('  Windows:  winget install --id GitHub.cli');
-    consola.info('  macOS:    brew install gh');
-    consola.info('  Linux:    https://github.com/cli/cli#installation');
-    console.log('');
-    consola.info('After installing, run: gh auth login');
-    process.exit(1);
-  }
+  // GitHub Setup
+  const githubAccounts: Array<{ username: string; org: string; tokenEnvVar: string }> = [];
+  consola.box('GitHub Configuration');
+  consola.info('GitHub requires a Personal Access Token with these scopes:');
+  consola.info('  - repo (Full control of private repositories)');
+  consola.info('  - read:org (Read org and team membership)');
+  consola.info('Create one at: https://github.com/settings/tokens/new');
 
-  consola.success('✅ GitHub CLI found!');
-  console.log('');
+  let addMoreGitHub = true;
 
-  // Step 2: Detect GitHub accounts
-  consola.start('Detecting authenticated GitHub accounts...');
-  const accounts = await getGitHubAccounts();
-
-  if (accounts.length === 0) {
-    consola.error('❌ No authenticated GitHub accounts found!');
-    console.log('');
-    consola.info('Please authenticate with GitHub first:');
-    consola.info('  gh auth login');
-    process.exit(1);
-  }
-
-  consola.success(`✅ Found ${accounts.length} account(s): ${accounts.join(', ')}`);
-  console.log('');
-
-  // Step 3: Select accounts to use
-  const selectedAccounts: Array<{ account: string; org: string }> = [];
-
-  if (accounts.length === 1) {
-    consola.info(`Using account: ${accounts[0]}`);
-    const { org } = await inquirer.prompt<{ org: string }>([
+  while (addMoreGitHub) {
+    const { username, org, tokenEnvVar, validateNow } = await inquirer.prompt<{
+      username: string;
+      org: string;
+      tokenEnvVar: string;
+      validateNow: boolean;
+      // @ts-expect-error - TypeScript cannot infer inquirer's complex overload types, but code is correct
+    }>([
+      {
+        type: 'input',
+        name: 'username',
+        message: 'GitHub username:',
+        validate: (input: string) => input.trim().length > 0 || 'Username is required',
+      },
       {
         type: 'input',
         name: 'org',
-        message: 'What organization should we check PRs for?',
-        default: accounts[0] || 'your-org',
+        message: 'Organization to monitor:',
+        validate: (input: string) => input.trim().length > 0 || 'Organization is required',
       },
-    ]);
-    selectedAccounts.push({ account: accounts[0] as string, org });
-  } else {
-    consola.info('Multiple GitHub accounts detected!');
-    const { useAll } = await inquirer.prompt<{ useAll: boolean }>([
+      {
+        type: 'input',
+        name: 'tokenEnvVar',
+        message: 'Environment variable name for token:',
+        default: (answers: { username: string }) =>
+          `GITHUB_TOKEN_${answers.username.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`,
+        validate: (input: string) =>
+          /^[A-Z][A-Z0-9_]*$/.test(input) ||
+          'Must be uppercase letters, numbers, and underscores only',
+      },
       {
         type: 'confirm',
-        name: 'useAll',
-        message: 'Would you like to use all accounts?',
-        default: true,
+        name: 'validateNow',
+        message: 'Validate token now? (token must be in environment)',
+        default: false,
       },
     ]);
 
-    if (useAll) {
-      for (const account of accounts) {
-        const { org } = await inquirer.prompt<{ org: string }>([
-          {
-            type: 'input',
-            name: 'org',
-            message: `Organization for ${account}?`,
-            default: account || 'your-org',
-          },
-        ]);
-        selectedAccounts.push({ account, org });
-      }
-    } else {
-      // Manual selection
-      for (const account of accounts) {
-        const { use } = await inquirer.prompt<{ use: boolean }>([
-          {
-            type: 'confirm',
-            name: 'use',
-            message: `Include account: ${account}?`,
-            default: true,
-          },
-        ]);
-        if (use) {
-          const { org } = await inquirer.prompt<{ org: string }>([
-            {
-              type: 'input',
-              name: 'org',
-              message: `  Organization for ${account}?`,
-              default: account || 'your-org',
-            },
-          ]);
-          selectedAccounts.push({ account, org });
+    // Validate token if requested
+    if (validateNow) {
+      const token = process.env[tokenEnvVar];
+      if (!token) {
+        consola.warn(`⚠️  Environment variable ${tokenEnvVar} not found. Skipping validation.`);
+      } else {
+        consola.start('Validating GitHub token...');
+        try {
+          const validation = await validateGitHubToken(token);
+          if (validation.valid) {
+            consola.success(`✅ Token valid! Authenticated as: ${validation.username}`);
+          } else {
+            consola.error(`❌ Token validation failed: ${validation.error}`);
+            const { continueAnyway } = await inquirer.prompt<{ continueAnyway: boolean }>([
+              {
+                type: 'confirm',
+                name: 'continueAnyway',
+                message: 'Continue anyway?',
+                default: false,
+              },
+            ]);
+            if (!continueAnyway) {
+              continue;
+            }
+          }
+        } catch (error) {
+          consola.error('❌ Validation error:', error);
         }
       }
     }
+
+    githubAccounts.push({ username, org, tokenEnvVar });
+
+    if (githubAccounts.length >= 1) {
+      const { addAnother } = await inquirer.prompt<{ addAnother: boolean }>([
+        {
+          type: 'confirm',
+          name: 'addAnother',
+          message: 'Add another GitHub account?',
+          default: false,
+        },
+      ]);
+      addMoreGitHub = addAnother;
+    }
   }
 
-  console.log('');
+  consola.info(`✅ Configured ${githubAccounts.length} GitHub account(s)`);
 
-  // Step 4: Bitbucket configuration
+  // Bitbucket Setup
   const { useBitbucket } = await inquirer.prompt<{ useBitbucket: boolean }>([
     {
       type: 'confirm',
@@ -168,86 +119,174 @@ export async function runInteractiveSetup(): Promise<Config> {
       default: false,
     },
   ]);
-  console.log('');
 
-  let bitbucketConfig:
-    | {
-        workspace: string;
-        username?: string | undefined;
-        apiKey?: string | undefined;
-        userDisplayName: string;
-      }
-    | undefined;
+  const bitbucketWorkspaces: Array<{
+    workspace: string;
+    username: string;
+    userDisplayName: string;
+    tokenEnvVar: string;
+  }> = [];
 
   if (useBitbucket) {
-    consola.info('Configuring Bitbucket...');
-    const answers = await inquirer.prompt<{
-      workspace: string;
-      username: string;
-      apiKey: string;
-      displayName: string;
-    }>([
-      {
-        type: 'input',
-        name: 'workspace',
-        message: 'Bitbucket workspace slug:',
-        default: '',
-      },
-      {
-        type: 'input',
-        name: 'username',
-        message: 'Bitbucket username (optional):',
-        default: '',
-      },
-      {
-        type: 'password',
-        name: 'apiKey',
-        message: 'Bitbucket App Password (optional):',
-        default: '',
-      },
-      {
-        type: 'input',
-        name: 'displayName',
-        message: 'Your display name:',
-        default: 'Your Name',
-      },
-    ]);
+    consola.box('Bitbucket Configuration');
+    consola.info('Bitbucket requires an App Password with these permissions:');
+    consola.info('  - Pull requests: Read');
+    consola.info('  - Account: Read');
+    consola.info('Create one at: https://bitbucket.org/account/settings/app-passwords/');
 
-    bitbucketConfig = {
-      workspace: answers.workspace,
-      username: answers.username || undefined,
-      apiKey: answers.apiKey || undefined,
-      userDisplayName: answers.displayName,
-    };
-    console.log('');
+    let addMoreBitbucket = true;
+
+    while (addMoreBitbucket) {
+      const { workspace, username, userDisplayName, tokenEnvVar, validateNow } =
+        await inquirer.prompt<{
+          workspace: string;
+          username: string;
+          userDisplayName: string;
+          tokenEnvVar: string;
+          validateNow: boolean;
+          // @ts-expect-error - TypeScript cannot infer inquirer's complex overload types, but code is correct
+        }>([
+          {
+            type: 'input',
+            name: 'workspace',
+            message: 'Bitbucket workspace slug:',
+            validate: (input: string) => input.trim().length > 0 || 'Workspace is required',
+          },
+          {
+            type: 'input',
+            name: 'username',
+            message: 'Bitbucket username:',
+            validate: (input: string) => input.trim().length > 0 || 'Username is required',
+          },
+          {
+            type: 'input',
+            name: 'userDisplayName',
+            message: 'Your display name (for PR matching):',
+            validate: (input: string) => input.trim().length > 0 || 'Display name is required',
+          },
+          {
+            type: 'input',
+            name: 'tokenEnvVar',
+            message: 'Environment variable name for app password:',
+            default: (answers: { workspace: string }) =>
+              `BITBUCKET_TOKEN_${answers.workspace.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`,
+            validate: (input: string) =>
+              /^[A-Z][A-Z0-9_]*$/.test(input) ||
+              'Must be uppercase letters, numbers, and underscores only',
+          },
+          {
+            type: 'confirm',
+            name: 'validateNow',
+            message: 'Validate app password now? (must be in environment)',
+            default: false,
+          },
+        ]);
+
+      // Validate token if requested
+      if (validateNow) {
+        const token = process.env[tokenEnvVar];
+        if (!token) {
+          consola.warn(`⚠️  Environment variable ${tokenEnvVar} not found. Skipping validation.`);
+        } else {
+          consola.start('Validating Bitbucket app password...');
+          try {
+            const validation = await validateBitbucketToken(workspace, username, token);
+            if (validation.valid) {
+              consola.success(`✅ App password valid! Authenticated as: ${validation.username}`);
+            } else {
+              consola.error(`❌ Validation failed: ${validation.error}`);
+              const { continueAnyway } = await inquirer.prompt<{ continueAnyway: boolean }>([
+                {
+                  type: 'confirm',
+                  name: 'continueAnyway',
+                  message: 'Continue anyway?',
+                  default: false,
+                },
+              ]);
+              if (!continueAnyway) {
+                continue;
+              }
+            }
+          } catch (error) {
+            consola.error('❌ Validation error:', error);
+          }
+        }
+      }
+
+      bitbucketWorkspaces.push({ workspace, username, userDisplayName, tokenEnvVar });
+
+      if (bitbucketWorkspaces.length >= 1) {
+        const { addAnother } = await inquirer.prompt<{ addAnother: boolean }>([
+          {
+            type: 'confirm',
+            name: 'addAnother',
+            message: 'Add another Bitbucket workspace?',
+            default: false,
+          },
+        ]);
+        addMoreBitbucket = addAnother;
+      }
+    }
+
+    consola.info(`✅ Configured ${bitbucketWorkspaces.length} Bitbucket workspace(s)`);
   }
 
-  // Step 5: Create config
+  // Watch interval
+  const { watchInterval } = await inquirer.prompt<{
+    watchInterval: number;
+    // @ts-expect-error - TypeScript cannot infer inquirer's complex overload types, but code is correct
+  }>([
+    {
+      type: 'number',
+      name: 'watchInterval',
+      message: 'Auto-refresh interval in watch mode (minutes):',
+      default: 15,
+      validate: (input: number) => input > 0 || 'Must be greater than 0',
+    },
+  ]);
+
+  // Create config
   const config: Config = {
     github: {
-      org: selectedAccounts[0]?.org || 'your-org',
-      accounts: selectedAccounts,
+      accounts: githubAccounts,
     },
-    bitbucket: bitbucketConfig || {
-      workspace: 'your-workspace',
-      userDisplayName: 'Your Name',
+    bitbucket: {
+      workspaces: bitbucketWorkspaces,
     },
-    skipBitbucket: !useBitbucket,
-    watchInterval: 15,
+    skipBitbucket: !useBitbucket || bitbucketWorkspaces.length === 0,
+    watchInterval,
   };
 
-  // Step 6: Save config
-  const configDir = join(homedir(), 'hemsoft', 'prs');
-  const configPath = join(configDir, 'config.json');
-
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
-  }
-
-  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  // Save config
+  const configPath = getConfigPath();
+  saveConfig(config, configPath);
 
   consola.success(`✅ Configuration saved to: ${configPath}`);
-  console.log('');
+
+  // Print setup instructions
+  consola.box('🔐 Token Setup Instructions');
+  consola.info('Before running prs, set these environment variables:\n');
+
+  // GitHub tokens
+  if (githubAccounts.length > 0) {
+    console.log(chalk.cyan('GitHub:'));
+    for (const account of githubAccounts) {
+      console.log(chalk.dim(`  export ${account.tokenEnvVar}="your_github_pat_here"`));
+    }
+  }
+
+  // Bitbucket tokens
+  if (bitbucketWorkspaces.length > 0) {
+    console.log(chalk.cyan('Bitbucket:'));
+    for (const workspace of bitbucketWorkspaces) {
+      console.log(
+        chalk.dim(`  export ${workspace.tokenEnvVar}="your_bitbucket_app_password_here"`)
+      );
+    }
+  }
+
+  consola.info('💡 Add these to your shell profile (~/.bashrc, ~/.zshrc, etc.) to persist them.');
+  consola.info('💡 Or use a .env file and load it before running prs.');
 
   return config;
 }

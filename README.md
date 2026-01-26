@@ -2,25 +2,27 @@
 
 > 🔍 Tool to check PR assignments and do agentic analysis on PRs across GitHub and Bitbucket
 
-A professional CLI tool for monitoring pull requests across multiple platforms with beautiful terminal output and flexible configuration.
+A professional CLI tool for monitoring pull requests across multiple platforms with beautiful terminal output, token-based authentication, and multi-account support.
 
 ## ✨ Features
 
 - 🔍 **Multi-platform**: Check PRs from GitHub and Bitbucket simultaneously
-- ⚙️ **Flexible Configuration**: Environment variables, config files, or CLI options
+- 🔐 **Token-Based Auth**: Secure authentication using Personal Access Tokens and App Passwords
+- 👥 **Multi-Account**: Support for multiple GitHub accounts and Bitbucket workspaces
+- ⚙️ **Flexible Configuration**: Environment variables and config files
 - 🔄 **Watch Mode**: Continuous monitoring with configurable refresh intervals
 - 📊 **Filtered Views**: Show approved PRs, merged PRs, or all PRs you're involved with
-- 🎯 **Smart Detection**: Uses gh CLI for GitHub and REST API for Bitbucket
+- 🎯 **Smart API Integration**: GitHub via Octokit, Bitbucket via REST API
 - 🎨 **Beautiful Output**: Styled terminal tables with clickable links
-- 👥 **Multi-Account**: Support for multiple GitHub accounts and organizations
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - **Node.js** 18.0.0 or higher
-- **GitHub CLI** (`gh`) - [Install here](https://cli.github.com/)
-- **Bitbucket App Password** (optional, for Bitbucket support)
+- **GitHub Personal Access Token(s)** with `repo` and `read:org` scopes
+- **Bitbucket App Password(s)** (optional, for Bitbucket support)
+- **GitHub Copilot** (optional, for AI-powered features)
 
 ### Installation
 
@@ -38,17 +40,74 @@ npm run build
 
 ### First-Time Setup
 
-Run the interactive setup wizard:
+#### 1. Create Access Tokens
 
+**GitHub Personal Access Token:**
+1. Visit https://github.com/settings/tokens/new
+2. Select scopes: `repo` (Full control of private repositories) and `read:org` (Read org and team membership)
+3. Copy the generated token (starts with `ghp_`)
+
+**Bitbucket App Password** (optional):
+1. Visit https://bitbucket.org/account/settings/app-passwords/
+2. Select permissions: `Pull requests: Read` and `Account: Read`
+3. Copy the generated password
+
+#### 2. Run the Tool
+
+The first time you run `prs`, it will automatically detect that no configuration exists and offer to guide you through setup:
+
+```bash
+npm run dev
+```
+
+You'll see:
+```
+👋 Welcome to prs!
+
+It looks like this is your first time running prs.
+Let's get you set up with GitHub and/or Bitbucket accounts.
+
+? Would you like to configure prs now? (Y/n)
+```
+
+**If you choose "Yes":**
+- The interactive setup wizard will launch
+- You'll be prompted for GitHub accounts (username, org, environment variable name)
+- Optionally configure Bitbucket workspaces
+- Tokens will be validated if available in environment
+- Configuration saved to `~/hemsoft/prs/config.json`
+
+**If you choose "No":**
+- A minimal starter configuration will be created with empty accounts
+- You can add accounts later by running `prs init`
+- The app will run normally (showing "All clear! No PRs found." until accounts are configured)
+
+Alternatively, you can run the setup wizard directly:
 ```bash
 npm run dev init
 ```
 
-This will:
-1. Detect your authenticated GitHub accounts
-2. Let you select which accounts/orgs to monitor
-3. Optionally configure Bitbucket access
-4. Save configuration to `~/hemsoft/prs/config.json`
+#### 3. Set Environment Variables
+
+**Bash/Zsh** (`~/.bashrc` or `~/.zshrc`):
+```bash
+export GITHUB_TOKEN_USERNAME="ghp_your_token_here"
+export BITBUCKET_TOKEN_WORKSPACE="your_app_password_here"
+```
+
+**PowerShell** (`$PROFILE`):
+```powershell
+$env:GITHUB_TOKEN_USERNAME="ghp_your_token_here"
+$env:BITBUCKET_TOKEN_WORKSPACE="your_app_password_here"
+```
+
+**Fish** (`~/.config/fish/config.fish`):
+```fish
+set -gx GITHUB_TOKEN_USERNAME "ghp_your_token_here"
+set -gx BITBUCKET_TOKEN_WORKSPACE "your_app_password_here"
+```
+
+> 💡 **Tip**: Environment variable names are configurable during setup. Use descriptive names to manage multiple accounts.
 
 ## 📖 Usage
 
@@ -76,40 +135,39 @@ prs --skip-bitbucket
 # Enable debug output
 prs --debug
 
-# Check authentication status
-prs auth-check
+# Check authentication status for all configured accounts
+prs auth status
 
-# Check access to a specific organization
-prs auth-check --org my-organization
+# View authentication help
+prs auth help
+
+# Re-run setup wizard
+prs init
 ```
 
 ### Configuration
 
-Configuration is loaded from multiple sources (highest priority first):
+Configuration is loaded from:
 
-1. **Environment variables**
-2. **Local config file** (`./.prs.json`)
-3. **User config file** (`~/hemsoft/prs/config.json`)
-4. **Legacy location** (`~/.prs.json`)
-5. **Defaults**
+1. **User config file** (`~/hemsoft/prs/config.json`) - Created by `prs init`
+2. **Environment variables** - For tokens (required) and overrides
 
 #### Environment Variables
 
+Environment variable names are user-defined during setup. Common patterns:
+
 ```bash
-# GitHub
-GITHUB_ORG=your-org
-GITHUB_TOKEN=ghp_xxx           # Optional, uses gh CLI auth by default
-GH_TOKEN=ghp_xxx               # Alternative to GITHUB_TOKEN
+# GitHub (names are configurable)
+export GITHUB_TOKEN_PERSONAL="ghp_xxx"
+export GITHUB_TOKEN_WORK="ghp_xxx"
 
-# Bitbucket
-BITBUCKET_WORKSPACE=your-workspace
-BITBUCKET_USERNAME=your-username
-BITBUCKET_API_KEY=your-api-key
-BITBUCKET_USER_DISPLAY_NAME="Your Name"
+# Bitbucket (names are configurable)
+export BITBUCKET_TOKEN_MYWORKSPACE="app_password_here"
+export BITBUCKET_TOKEN_COMPANY="app_password_here"
 
-# Behavior
-SKIP_BITBUCKET=false
-WATCH_INTERVAL=15
+# Behavior overrides
+export SKIP_BITBUCKET=true
+export WATCH_INTERVAL=30
 ```
 
 #### Config File Example
@@ -117,20 +175,35 @@ WATCH_INTERVAL=15
 ```json
 {
   "github": {
-    "org": "your-org",
     "accounts": [
-      { "account": "account1", "org": "org1" },
-      { "account": "account2", "org": "org2" }
+      {
+        "username": "myusername",
+        "org": "my-org",
+        "tokenEnvVar": "GITHUB_TOKEN_PERSONAL"
+      },
+      {
+        "username": "workusername",
+        "org": "work-org",
+        "tokenEnvVar": "GITHUB_TOKEN_WORK"
+      }
     ]
   },
   "bitbucket": {
-    "workspace": "your-workspace",
-    "userDisplayName": "Your Name"
+    "workspaces": [
+      {
+        "workspace": "myworkspace",
+        "username": "myusername",
+        "userDisplayName": "My Name",
+        "tokenEnvVar": "BITBUCKET_TOKEN_MYWORKSPACE"
+      }
+    ]
   },
   "skipBitbucket": false,
   "watchInterval": 15
 }
 ```
+
+> 📝 **Note**: Tokens are **never** stored in the config file. Only environment variable names are saved.
 
 ## 🛠️ Development
 
@@ -161,55 +234,78 @@ npm run check
 src/
 ├── index.ts              # Main CLI entry point
 ├── api/                  # API clients
-│   ├── github.ts        # GitHub API via gh CLI
+│   ├── github.ts        # GitHub API via Octokit
 │   └── bitbucket.ts     # Bitbucket REST API
+├── commands/             # Command implementations
+│   ├── auth.ts          # Authentication status and help
+│   └── hello.ts         # Demo AI command
 ├── lib/                  # Core services
-│   ├── ai.ts            # AI service (for future PR analysis)
+│   ├── ai.ts            # AI service (GitHub Copilot SDK)
 │   ├── banner.ts        # HemSoft branding
-│   ├── config.ts        # Legacy config support
 │   └── config-loader.ts # Configuration loading
 ├── types/                # TypeScript type definitions
-│   ├── config.ts        # Configuration schemas
+│   ├── config.ts        # Configuration schemas (Zod)
 │   ├── github.ts        # GitHub API types
 │   └── bitbucket.ts     # Bitbucket API types
 └── utils/                # Utility functions
-    ├── auth-check.ts    # GitHub auth verification
+    ├── token-validator.ts # Token validation and scope checking
     ├── interactive-setup.ts # Setup wizard
     └── splash-texts.ts  # Loading messages
 ```
 
 ## 🔧 Troubleshooting
 
-### GitHub Authentication Issues
+### Token Authentication Issues
 
 If you see errors about missing PRs or authentication:
 
-1. **Check your authentication status:**
+1. **Check authentication status for all accounts:**
    ```bash
-   prs auth-check
-   # or
-   gh auth status
+   prs auth status
    ```
 
-2. **Authenticate with GitHub CLI:**
+2. **Verify tokens are set in environment:**
    ```bash
-   gh auth login
+   # On Windows (PowerShell)
+   $env:GITHUB_TOKEN_USERNAME
+
+   # On macOS/Linux (Bash/Zsh)
+   echo $GITHUB_TOKEN_USERNAME
    ```
 
-3. **Refresh expired tokens:**
+3. **Common issues:**
+   - **"Token not set"**: Environment variable not defined or misspelled
+   - **"Invalid"**: Token expired, revoked, or incorrect
+   - **"Insufficient scopes"**: Token missing required permissions (`repo`, `read:org` for GitHub)
+   - **"Rate limited"**: Too many API requests - wait and retry
+
+4. **Validate token manually:**
    ```bash
-   gh auth refresh
+   # GitHub
+   curl -H "Authorization: Bearer YOUR_TOKEN" https://api.github.com/user
+   
+   # Bitbucket
+   curl -u username:app_password https://api.bitbucket.org/2.0/user
    ```
 
-4. **Switch accounts if needed:**
-   ```bash
-   gh auth switch
-   ```
+5. **Regenerate tokens:**
+   - GitHub: https://github.com/settings/tokens
+   - Bitbucket: https://bitbucket.org/account/settings/app-passwords/
 
-5. **Verify organization access:**
-   ```bash
-   prs auth-check --org your-org
-   ```
+### Configuration Issues
+
+- **First-time users**: The app automatically offers to run setup wizard - just say "Yes"!
+- **Old configuration format**: The app will automatically detect and migrate old configs on first run
+- **Missing PRs**: Ensure your username/org are correct in config
+- **Wrong account**: Check `tokenEnvVar` matches your environment variable names
+- **Missing tokens**: Run `prs auth status` to see which tokens are missing
+
+### Copilot SDK Issues
+
+For AI-powered features (optional):
+- Install Copilot CLI: `npm install -g @github/copilot-cli`
+- Authenticate: `copilot auth login`
+- Check status: `prs auth status` (shows Copilot status)
 
 ## 🎯 Architecture
 
@@ -218,23 +314,32 @@ If you see errors about missing PRs or authentication:
 Built on the HemSoft CLI Template (`hs-cli-template`):
 - Modern tooling (TypeScript, ESLint, Prettier)
 - Pre-commit hooks for quality
-- AI integration ready for future features
-- Professional terminal UI
+- AI integration ready via GitHub Copilot SDK
+- Professional terminal UI with HemSoft branding
 
 ### GitHub Integration
 
-Uses GitHub CLI (`gh`) for authentication and API access:
-- Leverages existing `gh auth` credentials
-- Supports multi-account workflows
-- No need for personal access tokens
-- Works with SSO-enabled organizations
+Uses Octokit (GitHub REST API) for authentication and data fetching:
+- Token-based authentication (Personal Access Tokens)
+- Multi-account support via multiple Octokit instances
+- GraphQL API for efficient PR queries
+- Rate limit monitoring and handling
+- Required scopes: `repo`, `read:org`
 
 ### Bitbucket Integration
 
 Direct REST API integration:
-- Requires App Password for authentication
+- App Password authentication (Basic Auth)
+- Multi-workspace support
 - Fetches repositories updated in last 90 days
-- Supports workspace-based access
+- OAuth scopes: `pullrequest:read`, `account:read`
+
+### Security Principles
+
+- **No token storage**: Tokens stored only in environment variables
+- **No plaintext commits**: Config files never contain sensitive data
+- **Scope validation**: Tokens validated on setup for required permissions
+- **Rate limit respect**: Automatic retry with exponential backoff
 
 ## ✅ Quality Gates
 
@@ -259,13 +364,16 @@ MIT © HemSoft Developments
 ## 🔗 Credits
 
 Built with:
-- [GitHub Copilot CLI SDK](https://github.com/github/copilot-cli-sdk)
-- [Commander.js](https://github.com/tj/commander.js)
-- [Chalk](https://github.com/chalk/chalk)
-- [cli-table3](https://github.com/cli-table/cli-table3)
-- [Consola](https://github.com/unjs/consola)
-- [Zod](https://github.com/colinhacks/zod)
-- [Terminal Link](https://github.com/sindresorhus/terminal-link)
+- [@octokit/rest](https://github.com/octokit/rest.js) - GitHub REST API client
+- [@octokit/graphql](https://github.com/octokit/graphql.js) - GitHub GraphQL API client
+- [GitHub Copilot CLI SDK](https://github.com/github/copilot-cli-sdk) - AI-powered features
+- [Commander.js](https://github.com/tj/commander.js) - CLI framework
+- [Chalk](https://github.com/chalk/chalk) - Terminal styling
+- [cli-table3](https://github.com/cli-table/cli-table3) - Beautiful tables
+- [Consola](https://github.com/unjs/consola) - Console logging
+- [Zod](https://github.com/colinhacks/zod) - Schema validation
+- [Terminal Link](https://github.com/sindresorhus/terminal-link) - Clickable links
+- [Inquirer](https://github.com/SBoudrias/Inquirer.js) - Interactive prompts
 
 ---
 
