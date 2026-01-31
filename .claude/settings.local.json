@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm whoami:*)",
+      "Bash(test:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm pack:*)",
+      "Bash(npm run check:*)",
+      "Bash(npm run lint:fix:*)",
+      "Bash(npm run format:*)"
+    ]
+  }
+}

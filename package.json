@@ -36,9 +36,19 @@
   ],
   "author": "HemSoft Developments",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HemSoft/hs-cli-prs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HemSoft/hs-cli-prs/issues"
+  },
+  "homepage": "https://github.com/HemSoft/hs-cli-prs#readme",
   "dependencies": {
     "@github/copilot-sdk": "^0.1.18",
     "@octokit/graphql": "^9.0.3",
+    "@octokit/plugin-retry": "^8.0.3",
+    "@octokit/plugin-throttling": "^11.0.3",
     "@octokit/rest": "^22.0.1",
     "boxen": "^8.0.1",
     "chalk": "^5.3.0",

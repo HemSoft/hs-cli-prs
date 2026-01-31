@@ -37,6 +37,14 @@ export const BitbucketRepositorySchema = z.object({
   name: z.string(),
   full_name: z.string(),
   updated_on: z.string().optional(),
+  description: z.string().nullable().optional(),
+  links: z.object({
+    html: z.object({
+      href: z.string(),
+    }),
+  }),
+  fork_policy: z.string().optional(),
+  parent: z.object({ full_name: z.string() }).nullable().optional(), // Present if it's a fork, null otherwise
 });
 
 export const BitbucketPagedResponseSchema = z.object({

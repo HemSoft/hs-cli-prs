@@ -11,7 +11,8 @@ A professional CLI tool for monitoring pull requests across multiple platforms w
 - 👥 **Multi-Account**: Support for multiple GitHub accounts and Bitbucket workspaces
 - ⚙️ **Flexible Configuration**: Environment variables and config files
 - 🔄 **Watch Mode**: Continuous monitoring with configurable refresh intervals
-- 📊 **Filtered Views**: Show approved PRs, merged PRs, or all PRs you're involved with
+- 📊 **Filtered Views**: Show approved PRs, merged PRs, stale PRs, or all PRs you're involved with
+- 🕰️ **Stale PR Detection**: Find PRs open longer than a configurable threshold across all repos
 - 🎯 **Smart API Integration**: GitHub via Octokit, Bitbucket via REST API
 - 🎨 **Beautiful Output**: Styled terminal tables with clickable links
 
@@ -125,6 +126,15 @@ prs --approved-open
 
 # List PRs you've approved that were merged since a date
 prs --approved-merged-since 2025-01-01
+
+# Find stale PRs (open longer than 90 days) across all repos
+prs --stale-prs
+
+# Find stale PRs with custom threshold (e.g., 30 days)
+prs --stale-days 30
+
+# Show only 10 oldest stale PRs
+prs --stale-limit 10
 
 # Custom watch interval (in minutes)
 prs --watch 30

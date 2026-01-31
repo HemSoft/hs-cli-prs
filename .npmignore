@@ -1,0 +1,49 @@
+# Source files
+src/
+*.ts
+!*.d.ts
+
+# Build artifacts
+*.tsbuildinfo
+tsconfig.json
+
+# Development files
+.husky/
+.vscode/
+.git/
+.gitignore
+.gitattributes
+.claude/
+.devcontainer/
+
+# Testing and linting
+*.test.js
+*.test.ts
+eslint.config.*
+.prettierrc
+.prettierignore
+
+# Documentation (README.md is included)
+docs/
+AGENTS.md
+
+# CI/CD
+.github/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.*
+
+# Lock files (users should generate their own)
+bun.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Misc
+.DS_Store
+Thumbs.db

@@ -3,12 +3,13 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { consola } from 'consola';
 import chalk from 'chalk';
+import { ZodError } from 'zod';
 import { type Config, ConfigSchema } from '../types/config.js';
 
 /**
  * Migrate old config format to new format
  */
-function migrateConfig(oldConfig: any): Config | null {
+function migrateConfig(oldConfig: Record<string, unknown>): Config | null {
   try {
     const newConfig: Config = {
       github: {
@@ -17,14 +18,15 @@ function migrateConfig(oldConfig: any): Config | null {
       bitbucket: {
         workspaces: [],
       },
-      skipBitbucket: oldConfig.skipBitbucket ?? true,
-      watchInterval: oldConfig.watchInterval ?? 15,
+      skipBitbucket: typeof oldConfig.skipBitbucket === 'boolean' ? oldConfig.skipBitbucket : true,
+      watchInterval: typeof oldConfig.watchInterval === 'number' ? oldConfig.watchInterval : 15,
     };
 
     // Migrate GitHub accounts
-    if (oldConfig.github?.accounts && Array.isArray(oldConfig.github.accounts)) {
-      for (const account of oldConfig.github.accounts) {
-        if (account.account && account.org) {
+    const github = oldConfig.github as Record<string, unknown> | undefined;
+    if (github?.accounts && Array.isArray(github.accounts)) {
+      for (const account of github.accounts as Record<string, unknown>[]) {
+        if (typeof account.account === 'string' && typeof account.org === 'string') {
           newConfig.github.accounts.push({
             username: account.account,
             org: account.org,
@@ -35,12 +37,14 @@ function migrateConfig(oldConfig: any): Config | null {
     }
 
     // Migrate Bitbucket workspace
-    if (oldConfig.bitbucket?.workspace) {
+    const bitbucket = oldConfig.bitbucket as Record<string, unknown> | undefined;
+    if (bitbucket && typeof bitbucket.workspace === 'string') {
       newConfig.bitbucket.workspaces.push({
-        workspace: oldConfig.bitbucket.workspace,
-        username: oldConfig.bitbucket.username || '',
-        userDisplayName: oldConfig.bitbucket.userDisplayName || '',
-        tokenEnvVar: `BITBUCKET_TOKEN_${oldConfig.bitbucket.workspace.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`,
+        workspace: bitbucket.workspace,
+        username: typeof bitbucket.username === 'string' ? bitbucket.username : '',
+        userDisplayName:
+          typeof bitbucket.userDisplayName === 'string' ? bitbucket.userDisplayName : '',
+        tokenEnvVar: `BITBUCKET_TOKEN_${bitbucket.workspace.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`,
       });
       newConfig.skipBitbucket = false;
     }
@@ -202,9 +206,8 @@ export function loadConfig(): Config {
 
     process.exit(1);
   } catch (error) {
-    if (error instanceof Error && 'issues' in error) {
+    if (error instanceof ZodError) {
       consola.error(`Invalid configuration file at ${configPath}:`);
-      // @ts-expect-error - Zod validation errors
       for (const issue of error.issues) {
         consola.error(`  - ${issue.path.join('.')}: ${issue.message}`);
       }
